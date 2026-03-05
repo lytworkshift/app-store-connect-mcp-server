@@ -20,7 +20,8 @@ import {
   UserHandlers, 
   AnalyticsHandlers,
   XcodeHandlers,
-  LocalizationHandlers 
+  LocalizationHandlers,
+  IapHandlers 
 } from './handlers/index.js';
 
 // Load environment variables
@@ -42,6 +43,7 @@ class AppStoreConnectServer {
   private analyticsHandlers: AnalyticsHandlers;
   private xcodeHandlers: XcodeHandlers;
   private localizationHandlers: LocalizationHandlers;
+  private iapHandlers: IapHandlers;
 
   constructor() {
     this.server = new Server({
@@ -62,6 +64,7 @@ class AppStoreConnectServer {
     this.analyticsHandlers = new AnalyticsHandlers(this.client, config);
     this.xcodeHandlers = new XcodeHandlers();
     this.localizationHandlers = new LocalizationHandlers(this.client);
+    this.iapHandlers = new IapHandlers(this.client);
 
     this.setupHandlers();
   }
@@ -827,6 +830,146 @@ class AppStoreConnectServer {
             },
             required: ["projectPath"]
           }
+        },
+
+        // In-App Purchase Tools
+        {
+          name: "list_in_app_purchases",
+          description: "List all in-app purchases (IAP) for an app. Includes consumable, non-consumable, and non-renewing subscriptions.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              appId: {
+                type: "string",
+                description: "The ID of the app (e.g. 6749826213 for LytQuiz)"
+              },
+              limit: {
+                type: "number",
+                description: "Maximum number of IAP to return (default: 100)",
+                minimum: 1,
+                maximum: 200
+              }
+            },
+            required: ["appId"]
+          }
+        },
+        {
+          name: "create_in_app_purchase",
+          description: "Create a new in-app purchase (non-consumable or consumable). Use for one-time purchases like lifetime unlock.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              appId: {
+                type: "string",
+                description: "The ID of the app"
+              },
+              productId: {
+                type: "string",
+                description: "Unique product ID (e.g. lytquiz_pro_lifetime). Cannot be changed after creation."
+              },
+              referenceName: {
+                type: "string",
+                description: "Internal reference name for tracking (up to 64 chars)"
+              },
+              inAppPurchaseType: {
+                type: "string",
+                enum: ["NON_CONSUMABLE", "CONSUMABLE", "NON_RENEWING_SUBSCRIPTION"],
+                description: "Type of IAP (default: NON_CONSUMABLE for lifetime)",
+                default: "NON_CONSUMABLE"
+              }
+            },
+            required: ["appId", "productId", "referenceName"]
+          }
+        },
+        {
+          name: "list_subscription_groups",
+          description: "List subscription groups for an app. Required before creating auto-renewable subscriptions.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              appId: {
+                type: "string",
+                description: "The ID of the app"
+              },
+              limit: {
+                type: "number",
+                description: "Maximum number of groups to return (default: 100)",
+                minimum: 1,
+                maximum: 200
+              }
+            },
+            required: ["appId"]
+          }
+        },
+        {
+          name: "create_subscription_group",
+          description: "Create a subscription group. Required before adding auto-renewable subscriptions.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              appId: {
+                type: "string",
+                description: "The ID of the app"
+              },
+              referenceName: {
+                type: "string",
+                description: "Internal reference name for the group (e.g. LytQuiz Pro)"
+              }
+            },
+            required: ["appId", "referenceName"]
+          }
+        },
+        {
+          name: "create_subscription",
+          description: "Create an auto-renewable subscription (monthly, yearly, etc.) in a subscription group.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              subscriptionGroupId: {
+                type: "string",
+                description: "ID of the subscription group (from list_subscription_groups or create_subscription_group)"
+              },
+              productId: {
+                type: "string",
+                description: "Unique product ID (e.g. lytquiz_pro_monthly)"
+              },
+              name: {
+                type: "string",
+                description: "Display name for the subscription"
+              },
+              duration: {
+                type: "string",
+                enum: ["ONE_WEEK", "ONE_MONTH", "TWO_MONTHS", "THREE_MONTHS", "SIX_MONTHS", "ONE_YEAR"],
+                description: "Subscription duration (e.g. ONE_MONTH for $2.99/mo, ONE_YEAR for $19.99/yr)"
+              }
+            },
+            required: ["subscriptionGroupId", "productId", "name", "duration"]
+          }
+        },
+        {
+          name: "list_in_app_purchase_price_points",
+          description: "Get available price points for an in-app purchase. Use to set pricing after creation.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              inAppPurchaseId: {
+                type: "string",
+                description: "The ID of the in-app purchase (from create response)"
+              },
+              territory: {
+                type: "string",
+                description: "Territory for price points (default: USA)",
+                default: "USA"
+              },
+              limit: {
+                type: "number",
+                description: "Maximum price points to return (default: 200)",
+                minimum: 1,
+                maximum: 200
+              }
+            },
+            required: ["inAppPurchaseId"]
+          }
         }
     ];
 
@@ -909,7 +1052,7 @@ class AppStoreConnectServer {
     }));
 
     // Handle tool calls
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name: string; arguments?: Record<string, any> } }) => {
       try {
         const args = request.params.arguments || {};
         
@@ -1030,11 +1173,36 @@ class AppStoreConnectServer {
             }
             return { toolResult: await this.analyticsHandlers.downloadFinanceReport(args as any) };
 
-          // Xcode Development Tools
-          case "list_schemes":
-            return { toolResult: await this.xcodeHandlers.listSchemes(args as any) };
+        // Xcode Development Tools
+        case "list_schemes":
+          return { toolResult: await this.xcodeHandlers.listSchemes(args as any) };
 
-          default:
+        // In-App Purchase Tools
+        case "list_in_app_purchases":
+          const iapList = await this.iapHandlers.listInAppPurchases(args as any);
+          return formatResponse(iapList);
+
+        case "create_in_app_purchase":
+          const createIap = await this.iapHandlers.createInAppPurchase(args as any);
+          return formatResponse(createIap);
+
+        case "list_subscription_groups":
+          const subGroups = await this.iapHandlers.listSubscriptionGroups(args as any);
+          return formatResponse(subGroups);
+
+        case "create_subscription_group":
+          const createGroup = await this.iapHandlers.createSubscriptionGroup(args as any);
+          return formatResponse(createGroup);
+
+        case "create_subscription":
+          const createSub = await this.iapHandlers.createSubscription(args as any);
+          return formatResponse(createSub);
+
+        case "list_in_app_purchase_price_points":
+          const pricePoints = await this.iapHandlers.listInAppPurchasePricePoints(args as any);
+          return formatResponse(pricePoints);
+
+        default:
             throw new McpError(
               ErrorCode.MethodNotFound,
               `Unknown tool: ${request.params.name}`

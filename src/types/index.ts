@@ -24,3 +24,6 @@ export * from './screenshots.js';
 
 // Localization types
 export * from './localizations.js';
+
+// In-App Purchase types
+export * from './iap.js';

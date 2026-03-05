@@ -67,4 +67,20 @@ export class AppStoreConnectClient {
       size: response.headers['content-length']
     };
   }
+
+  /**
+   * Make GET request to App Store Connect API v2 (e.g. inAppPurchases price points)
+   */
+  async getV2<T = any>(path: string, params?: Record<string, any>): Promise<T> {
+    const token = await this.authService.generateToken();
+    const url = `https://api.appstoreconnect.apple.com/v2${path.startsWith('/') ? path : '/' + path}`;
+    const response = await axios.get<T>(url, {
+      params,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    return response.data;
+  }
 }

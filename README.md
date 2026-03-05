@@ -62,6 +62,14 @@ This server transforms complex App Store Connect operations into simple conversa
   - Get bundle ID details
   - Enable/disable capabilities
 
+- **In-App Purchases** ✨ **NEW (lytworkshift fork)**
+  - List in-app purchases for an app
+  - Create non-consumable IAP (e.g. lifetime unlock)
+  - List subscription groups
+  - Create subscription groups
+  - Create auto-renewable subscriptions (monthly, yearly)
+  - List price points for IAP (v2 API)
+
 - **Device Management**
   - List registered devices
   - Filter by device type, platform, status

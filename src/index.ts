@@ -21,7 +21,8 @@ import {
   AnalyticsHandlers,
   XcodeHandlers,
   LocalizationHandlers,
-  IapHandlers 
+  IapHandlers,
+  ReviewHandlers 
 } from './handlers/index.js';
 
 // Load environment variables
@@ -44,6 +45,7 @@ class AppStoreConnectServer {
   private xcodeHandlers: XcodeHandlers;
   private localizationHandlers: LocalizationHandlers;
   private iapHandlers: IapHandlers;
+  private reviewHandlers: ReviewHandlers;
 
   constructor() {
     this.server = new Server({
@@ -65,6 +67,7 @@ class AppStoreConnectServer {
     this.xcodeHandlers = new XcodeHandlers();
     this.localizationHandlers = new LocalizationHandlers(this.client);
     this.iapHandlers = new IapHandlers(this.client);
+    this.reviewHandlers = new ReviewHandlers(this.client);
 
     this.setupHandlers();
   }
@@ -970,6 +973,106 @@ class AppStoreConnectServer {
             },
             required: ["inAppPurchaseId"]
           }
+        },
+
+        // App Review & Rejection Tools
+        {
+          name: "list_review_submissions",
+          description: "List review submissions for an app. Shows submission state (WAITING_FOR_REVIEW, IN_REVIEW, UNRESOLVED_ISSUES, COMPLETE). Use to find rejected or pending submissions.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              appId: {
+                type: "string",
+                description: "The ID of the app"
+              },
+              limit: {
+                type: "number",
+                description: "Maximum submissions to return (default: 10)",
+                minimum: 1,
+                maximum: 50
+              },
+              filterState: {
+                type: "array",
+                items: {
+                  type: "string",
+                  enum: ["WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES", "CANCELING", "COMPLETING", "COMPLETE"]
+                },
+                description: "Filter by submission state (e.g. ['UNRESOLVED_ISSUES'] to find rejections)"
+              }
+            },
+            required: ["appId"]
+          }
+        },
+        {
+          name: "get_review_submission",
+          description: "Get details of a specific review submission by ID.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              submissionId: {
+                type: "string",
+                description: "The ID of the review submission"
+              },
+              include: {
+                type: "array",
+                items: {
+                  type: "string",
+                  enum: ["items", "app", "appStoreVersionForReview", "submittedByActor", "lastUpdatedByActor"]
+                },
+                description: "Related resources to include"
+              }
+            },
+            required: ["submissionId"]
+          }
+        },
+        {
+          name: "list_review_submission_items",
+          description: "List items within a review submission. Each item has a state (ACCEPTED, APPROVED, REJECTED, READY_FOR_REVIEW) and links to the appStoreVersion. Use to find which specific version was rejected.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              submissionId: {
+                type: "string",
+                description: "The ID of the review submission"
+              },
+              limit: {
+                type: "number",
+                description: "Maximum items to return (default: 20)",
+                minimum: 1,
+                maximum: 50
+              }
+            },
+            required: ["submissionId"]
+          }
+        },
+        {
+          name: "get_app_review_detail",
+          description: "Get the App Store review detail for a specific app store version. Contains contact info, demo account, and review notes that were submitted for review.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              appStoreVersionId: {
+                type: "string",
+                description: "The ID of the app store version (not the version string, the API ID)"
+              }
+            },
+            required: ["appStoreVersionId"]
+          }
+        },
+        {
+          name: "get_rejection_info",
+          description: "COMPREHENSIVE: Get full rejection/unresolved-issues information for an app. Finds all submissions with UNRESOLVED_ISSUES or REJECTED versions, fetches their items and review details, and returns a structured report. Use this as the primary tool to understand why an app was rejected.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              appId: {
+                type: "string",
+                description: "The ID of the app (e.g. 6749826213 for LytQuiz)"
+              }
+            },
+            required: ["appId"]
+          }
         }
     ];
 
@@ -1201,6 +1304,27 @@ class AppStoreConnectServer {
         case "list_in_app_purchase_price_points":
           const pricePoints = await this.iapHandlers.listInAppPurchasePricePoints(args as any);
           return formatResponse(pricePoints);
+
+        // App Review & Rejection Tools
+        case "list_review_submissions":
+          const reviewSubs = await this.reviewHandlers.listReviewSubmissions(args as any);
+          return formatResponse(reviewSubs);
+
+        case "get_review_submission":
+          const reviewSub = await this.reviewHandlers.getReviewSubmission(args as any);
+          return formatResponse(reviewSub);
+
+        case "list_review_submission_items":
+          const reviewItems = await this.reviewHandlers.listReviewSubmissionItems(args as any);
+          return formatResponse(reviewItems);
+
+        case "get_app_review_detail":
+          const reviewDetail = await this.reviewHandlers.getAppStoreReviewDetail(args as any);
+          return formatResponse(reviewDetail);
+
+        case "get_rejection_info":
+          const rejectionInfo = await this.reviewHandlers.getRejectionInfo(args as any);
+          return formatResponse(rejectionInfo);
 
         default:
             throw new McpError(

@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ListToolsRequestSchema, CallToolRequestSchema, ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import axios from 'axios';
 import { AppStoreConnectClient } from './services/index.js';
-import { AppHandlers, BetaHandlers, BundleHandlers, DeviceHandlers, UserHandlers, AnalyticsHandlers, XcodeHandlers, LocalizationHandlers } from './handlers/index.js';
+import { AppHandlers, BetaHandlers, BundleHandlers, DeviceHandlers, UserHandlers, AnalyticsHandlers, XcodeHandlers, LocalizationHandlers, IapHandlers, ReviewHandlers } from './handlers/index.js';
 // Load environment variables
 const config = {
     keyId: process.env.APP_STORE_CONNECT_KEY_ID,
@@ -23,6 +23,8 @@ class AppStoreConnectServer {
     analyticsHandlers;
     xcodeHandlers;
     localizationHandlers;
+    iapHandlers;
+    reviewHandlers;
     constructor() {
         this.server = new Server({
             name: "appstore-connect-server",
@@ -41,6 +43,8 @@ class AppStoreConnectServer {
         this.analyticsHandlers = new AnalyticsHandlers(this.client, config);
         this.xcodeHandlers = new XcodeHandlers();
         this.localizationHandlers = new LocalizationHandlers(this.client);
+        this.iapHandlers = new IapHandlers(this.client);
+        this.reviewHandlers = new ReviewHandlers(this.client);
         this.setupHandlers();
     }
     buildToolsList() {
@@ -797,6 +801,218 @@ class AppStoreConnectServer {
                     },
                     required: ["projectPath"]
                 }
+            },
+            // In-App Purchase Tools
+            {
+                name: "list_in_app_purchases",
+                description: "List all in-app purchases (IAP) for an app. Includes consumable, non-consumable, and non-renewing subscriptions.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        appId: {
+                            type: "string",
+                            description: "The ID of the app (e.g. 6749826213 for LytQuiz)"
+                        },
+                        limit: {
+                            type: "number",
+                            description: "Maximum number of IAP to return (default: 100)",
+                            minimum: 1,
+                            maximum: 200
+                        }
+                    },
+                    required: ["appId"]
+                }
+            },
+            {
+                name: "create_in_app_purchase",
+                description: "Create a new in-app purchase (non-consumable or consumable). Use for one-time purchases like lifetime unlock.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        appId: {
+                            type: "string",
+                            description: "The ID of the app"
+                        },
+                        productId: {
+                            type: "string",
+                            description: "Unique product ID (e.g. lytquiz_pro_lifetime). Cannot be changed after creation."
+                        },
+                        referenceName: {
+                            type: "string",
+                            description: "Internal reference name for tracking (up to 64 chars)"
+                        },
+                        inAppPurchaseType: {
+                            type: "string",
+                            enum: ["NON_CONSUMABLE", "CONSUMABLE", "NON_RENEWING_SUBSCRIPTION"],
+                            description: "Type of IAP (default: NON_CONSUMABLE for lifetime)",
+                            default: "NON_CONSUMABLE"
+                        }
+                    },
+                    required: ["appId", "productId", "referenceName"]
+                }
+            },
+            {
+                name: "list_subscription_groups",
+                description: "List subscription groups for an app. Required before creating auto-renewable subscriptions.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        appId: {
+                            type: "string",
+                            description: "The ID of the app"
+                        },
+                        limit: {
+                            type: "number",
+                            description: "Maximum number of groups to return (default: 100)",
+                            minimum: 1,
+                            maximum: 200
+                        }
+                    },
+                    required: ["appId"]
+                }
+            },
+            {
+                name: "create_subscription_group",
+                description: "Create a subscription group. Required before adding auto-renewable subscriptions.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        appId: {
+                            type: "string",
+                            description: "The ID of the app"
+                        },
+                        referenceName: {
+                            type: "string",
+                            description: "Internal reference name for the group (e.g. LytQuiz Pro)"
+                        }
+                    },
+                    required: ["appId", "referenceName"]
+                }
+            },
+            {
+                name: "create_subscription",
+                description: "Create an auto-renewable subscription (monthly, yearly, etc.) in a subscription group.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        subscriptionGroupId: {
+                            type: "string",
+                            description: "ID of the subscription group (from list_subscription_groups or create_subscription_group)"
+                        },
+                        productId: {
+                            type: "string",
+                            description: "Unique product ID (e.g. lytquiz_pro_monthly)"
+                        },
+                        name: {
+                            type: "string",
+                            description: "Display name for the subscription"
+                        },
+                        duration: {
+                            type: "string",
+                            enum: ["ONE_WEEK", "ONE_MONTH", "TWO_MONTHS", "THREE_MONTHS", "SIX_MONTHS", "ONE_YEAR"],
+                            description: "Subscription duration (e.g. ONE_MONTH for $2.99/mo, ONE_YEAR for $19.99/yr)"
+                        }
+                    },
+                    required: ["subscriptionGroupId", "productId", "name", "duration"]
+                }
+            },
+            {
+                name: "list_in_app_purchase_price_points",
+                description: "Get available price points for an in-app purchase. Use to set pricing after creation.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        inAppPurchaseId: {
+                            type: "string",
+                            description: "The ID of the in-app purchase (from create response)"
+                        },
+                        territory: {
+                            type: "string",
+                            description: "Territory for price points (default: USA)",
+                            default: "USA"
+                        },
+                        limit: {
+                            type: "number",
+                            description: "Maximum price points to return (default: 200)",
+                            minimum: 1,
+                            maximum: 200
+                        }
+                    },
+                    required: ["inAppPurchaseId"]
+                }
+            },
+            // Review & Rejection Tools
+            {
+                name: "list_review_submissions",
+                description: "List review submissions for an app. Use filter state='UNRESOLVED_ISSUES' to find rejections. Returns submission IDs needed for get_review_submission_items.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        appId: {
+                            type: "string",
+                            description: "The ID of the app (e.g. 6749826213 for LytQuiz)"
+                        },
+                        state: {
+                            type: "string",
+                            description: "Filter by state (e.g. UNRESOLVED_ISSUES, COMPLETE, WAITING_FOR_REVIEW, IN_REVIEW)",
+                        },
+                        limit: {
+                            type: "number",
+                            description: "Maximum submissions to return (default: 20)",
+                            minimum: 1,
+                            maximum: 200
+                        }
+                    },
+                    required: ["appId"]
+                }
+            },
+            {
+                name: "get_review_submission_items",
+                description: "Get items in a review submission with their states (REJECTED, APPROVED, etc). Shows which items have issues.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        submissionId: {
+                            type: "string",
+                            description: "The review submission ID (from list_review_submissions)"
+                        },
+                        limit: {
+                            type: "number",
+                            description: "Maximum items to return (default: 50)",
+                            minimum: 1,
+                            maximum: 200
+                        }
+                    },
+                    required: ["submissionId"]
+                }
+            },
+            {
+                name: "get_app_store_review_detail",
+                description: "Get the review detail for a version — developer notes to Apple (e.g. demo credentials), contact info. NOTE: The 'notes' field contains the developer's own notes TO Apple, NOT Apple's rejection reason.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        appStoreVersionId: {
+                            type: "string",
+                            description: "The app store version ID (from list_app_store_versions)"
+                        }
+                    },
+                    required: ["appStoreVersionId"]
+                }
+            },
+            {
+                name: "get_rejection_status",
+                description: "Get comprehensive rejection status for an app. Combines UNRESOLVED_ISSUES submissions, submission item states, REJECTED versions, and developer notes. Apple's actual rejection reasons (guideline violations, bug descriptions) are only in the Resolution Center (web UI).",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        appId: {
+                            type: "string",
+                            description: "The ID of the app (e.g. 6749826213 for LytQuiz)"
+                        }
+                    },
+                    required: ["appId"]
+                }
             }
         ];
         // Sales and Finance Report tools - only available if vendor number is configured
@@ -964,6 +1180,38 @@ class AppStoreConnectServer {
                     // Xcode Development Tools
                     case "list_schemes":
                         return { toolResult: await this.xcodeHandlers.listSchemes(args) };
+                    // In-App Purchase Tools
+                    case "list_in_app_purchases":
+                        const iapList = await this.iapHandlers.listInAppPurchases(args);
+                        return formatResponse(iapList);
+                    case "create_in_app_purchase":
+                        const createIap = await this.iapHandlers.createInAppPurchase(args);
+                        return formatResponse(createIap);
+                    case "list_subscription_groups":
+                        const subGroups = await this.iapHandlers.listSubscriptionGroups(args);
+                        return formatResponse(subGroups);
+                    case "create_subscription_group":
+                        const createGroup = await this.iapHandlers.createSubscriptionGroup(args);
+                        return formatResponse(createGroup);
+                    case "create_subscription":
+                        const createSub = await this.iapHandlers.createSubscription(args);
+                        return formatResponse(createSub);
+                    case "list_in_app_purchase_price_points":
+                        const pricePoints = await this.iapHandlers.listInAppPurchasePricePoints(args);
+                        return formatResponse(pricePoints);
+                    // Review & Rejection
+                    case "list_review_submissions":
+                        const reviewSubs = await this.reviewHandlers.listReviewSubmissions(args);
+                        return formatResponse(reviewSubs);
+                    case "get_review_submission_items":
+                        const subItems = await this.reviewHandlers.getReviewSubmissionItems(args);
+                        return formatResponse(subItems);
+                    case "get_app_store_review_detail":
+                        const reviewDetail = await this.reviewHandlers.getAppStoreReviewDetail(args);
+                        return formatResponse(reviewDetail);
+                    case "get_rejection_status":
+                        const rejStatus = await this.reviewHandlers.getRejectionStatus(args);
+                        return formatResponse(rejStatus);
                     default:
                         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
                 }

@@ -21,7 +21,8 @@ import {
   AnalyticsHandlers,
   XcodeHandlers,
   LocalizationHandlers,
-  IapHandlers 
+  IapHandlers,
+  ReviewHandlers 
 } from './handlers/index.js';
 
 // Load environment variables
@@ -44,6 +45,7 @@ class AppStoreConnectServer {
   private xcodeHandlers: XcodeHandlers;
   private localizationHandlers: LocalizationHandlers;
   private iapHandlers: IapHandlers;
+  private reviewHandlers: ReviewHandlers;
 
   constructor() {
     this.server = new Server({
@@ -65,6 +67,7 @@ class AppStoreConnectServer {
     this.xcodeHandlers = new XcodeHandlers();
     this.localizationHandlers = new LocalizationHandlers(this.client);
     this.iapHandlers = new IapHandlers(this.client);
+    this.reviewHandlers = new ReviewHandlers(this.client);
 
     this.setupHandlers();
   }
@@ -970,6 +973,79 @@ class AppStoreConnectServer {
             },
             required: ["inAppPurchaseId"]
           }
+        },
+        // Review & Rejection Tools
+        {
+          name: "list_review_submissions",
+          description: "List review submissions for an app. Use filter state='UNRESOLVED_ISSUES' to find rejections. Returns submission IDs needed for get_review_submission_items.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              appId: {
+                type: "string",
+                description: "The ID of the app (e.g. 6749826213 for LytQuiz)"
+              },
+              state: {
+                type: "string",
+                description: "Filter by state (e.g. UNRESOLVED_ISSUES, COMPLETE, WAITING_FOR_REVIEW, IN_REVIEW)",
+              },
+              limit: {
+                type: "number",
+                description: "Maximum submissions to return (default: 20)",
+                minimum: 1,
+                maximum: 200
+              }
+            },
+            required: ["appId"]
+          }
+        },
+        {
+          name: "get_review_submission_items",
+          description: "Get items in a review submission with their states (REJECTED, APPROVED, etc). Shows which items have issues.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              submissionId: {
+                type: "string",
+                description: "The review submission ID (from list_review_submissions)"
+              },
+              limit: {
+                type: "number",
+                description: "Maximum items to return (default: 50)",
+                minimum: 1,
+                maximum: 200
+              }
+            },
+            required: ["submissionId"]
+          }
+        },
+        {
+          name: "get_app_store_review_detail",
+          description: "Get the review detail for a version — developer notes to Apple (e.g. demo credentials), contact info. NOTE: The 'notes' field contains the developer's own notes TO Apple, NOT Apple's rejection reason.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              appStoreVersionId: {
+                type: "string",
+                description: "The app store version ID (from list_app_store_versions)"
+              }
+            },
+            required: ["appStoreVersionId"]
+          }
+        },
+        {
+          name: "get_rejection_status",
+          description: "Get comprehensive rejection status for an app. Combines UNRESOLVED_ISSUES submissions, submission item states, REJECTED versions, and developer notes. Apple's actual rejection reasons (guideline violations, bug descriptions) are only in the Resolution Center (web UI).",
+          inputSchema: {
+            type: "object",
+            properties: {
+              appId: {
+                type: "string",
+                description: "The ID of the app (e.g. 6749826213 for LytQuiz)"
+              }
+            },
+            required: ["appId"]
+          }
         }
     ];
 
@@ -1201,6 +1277,23 @@ class AppStoreConnectServer {
         case "list_in_app_purchase_price_points":
           const pricePoints = await this.iapHandlers.listInAppPurchasePricePoints(args as any);
           return formatResponse(pricePoints);
+
+        // Review & Rejection
+        case "list_review_submissions":
+          const reviewSubs = await this.reviewHandlers.listReviewSubmissions(args as any);
+          return formatResponse(reviewSubs);
+
+        case "get_review_submission_items":
+          const subItems = await this.reviewHandlers.getReviewSubmissionItems(args as any);
+          return formatResponse(subItems);
+
+        case "get_app_store_review_detail":
+          const reviewDetail = await this.reviewHandlers.getAppStoreReviewDetail(args as any);
+          return formatResponse(reviewDetail);
+
+        case "get_rejection_status":
+          const rejStatus = await this.reviewHandlers.getRejectionStatus(args as any);
+          return formatResponse(rejStatus);
 
         default:
             throw new McpError(
